@@ -1,0 +1,92 @@
+# Build and publish the paperless-mcp image to the private registry.
+#
+# CI's only job is to publish an immutable artifact: it builds the image and
+# pushes it to registry.home.chaosbit.dev over an ephemeral tailnet join. It has
+# no cluster credentials and no write access to gonk-infra. Deployment is
+# pull-based: Flux on Gonk ranks the sortable tag and rolls the newest one out.
+#
+# Tags pushed:
+#   :latest                  convenience / humans
+#   :<sha>                   immutable, for manual pinning / rollback
+#   :main-<sha7>-<unixts>    sortable, what Flux's ImagePolicy ranks
+#
+# Required secrets, REPOSITORY level on this repo (org-level secrets resolve to
+# empty strings in a private repo on the GitHub Free plan):
+#   TS_OAUTH_CLIENT_ID / TS_OAUTH_SECRET   Tailscale OAuth client (tag:ci).
+#   REGISTRY_USERNAME / REGISTRY_PASSWORD  Registry `ci` credential.
+name: build-and-push
+
+on:
+  push:
+    branches: [main]
+  # Manual seed for the first build, and for forced rebuilds.
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  # @spec DACC-BUILD-001
+  # Flux deploys the newest tag on its own, so nothing is published unless lint,
+  # type-check and tests pass on this exact commit.
+  check:
+    uses: ./.github/workflows/ci.yml
+
+  build:
+    needs: check
+    # The tags say main, so a manual run from another branch publishes nothing.
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
+
+      # Fail here rather than inside the tailscale action, whose error never
+      # mentions that a secret was empty.
+      - name: Check required secrets are present
+        env:
+          TS_OAUTH_CLIENT_ID: ${{ secrets.TS_OAUTH_CLIENT_ID }}
+          TS_OAUTH_SECRET: ${{ secrets.TS_OAUTH_SECRET }}
+          REGISTRY_USERNAME: ${{ secrets.REGISTRY_USERNAME }}
+          REGISTRY_PASSWORD: ${{ secrets.REGISTRY_PASSWORD }}
+        run: |
+          missing=()
+          for name in TS_OAUTH_CLIENT_ID TS_OAUTH_SECRET REGISTRY_USERNAME REGISTRY_PASSWORD; do
+            [ -n "${!name}" ] || missing+=("$name")
+          done
+          if [ ${#missing[@]} -ne 0 ]; then
+            echo "::error::Missing repository secrets: ${missing[*]}"
+            echo "Fix:  gh secret set <NAME> --repo ${GITHUB_REPOSITORY}"
+            exit 1
+          fi
+
+      - name: Image metadata (sortable tag)
+        id: meta
+        run: |
+          echo "sha7=$(echo "${GITHUB_SHA}" | cut -c1-7)" >> "$GITHUB_OUTPUT"
+          echo "ts=$(date +%s)" >> "$GITHUB_OUTPUT"
+
+      - name: Join tailnet (ephemeral)
+        uses: tailscale/github-action@306e68a486fd2350f2bfc3b19fcd143891a4a2d8 # v4
+        with:
+          oauth-client-id: ${{ secrets.TS_OAUTH_CLIENT_ID }}
+          oauth-secret: ${{ secrets.TS_OAUTH_SECRET }}
+          tags: tag:ci
+
+      - name: Log in to registry
+        run: |
+          echo "${{ secrets.REGISTRY_PASSWORD }}" \
+            | docker login registry.home.chaosbit.dev \
+                -u "${{ secrets.REGISTRY_USERNAME }}" \
+                --password-stdin
+
+      - name: Build and push
+        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7
+        with:
+          context: .
+          push: true
+          tags: |
+            registry.home.chaosbit.dev/${{ github.event.repository.name }}:latest
+            registry.home.chaosbit.dev/${{ github.event.repository.name }}:${{ github.sha }}
+            registry.home.chaosbit.dev/${{ github.event.repository.name }}:main-${{ steps.meta.outputs.sha7 }}-${{ steps.meta.outputs.ts }}

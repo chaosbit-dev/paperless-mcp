@@ -1,0 +1,43 @@
+name: CI
+
+on:
+  pull_request:
+  # Called by build-push.yml, which is what runs on main: the image is published
+  # only if these pass. A push trigger here as well would run the suite twice per
+  # merge, in one concurrency group, each run cancelling the other.
+  workflow_call:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  # Never cancel on main: that run is the gate in front of an image push.
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: astral-sh/setup-uv@v7
+        with:
+          python-version: "3.13"
+          enable-cache: true
+
+      - name: Install
+        id: install
+        run: uv sync --locked
+
+      - name: Ruff
+        if: ${{ !cancelled() && steps.install.outcome == 'success' }}
+        run: uv run ruff check --output-format=github .
+
+      - name: Mypy
+        if: ${{ !cancelled() && steps.install.outcome == 'success' }}
+        run: uv run mypy src
+
+      - name: Pytest
+        if: ${{ !cancelled() && steps.install.outcome == 'success' }}
+        run: uv run pytest -q
