@@ -3,6 +3,9 @@
 from __future__ import annotations
 
 import asyncio
+import json
+import sys
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
 import httpx2
@@ -13,13 +16,15 @@ from starlette.responses import JSONResponse
 if TYPE_CHECKING:
     from collections.abc import Mapping
 
-    from starlette.types import ASGIApp, Receive, Scope, Send
+    from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
     from paperless_mcp.config import Identity
 
 HEALTH_PATH = "/healthz"
 # Where the middleware leaves the caller's identity for the tools.
 IDENTITY_SCOPE_KEY = "paperless_mcp.identity"
+# A refusal line records the path, which the caller chose: bound it.
+PATH_LOG_LIMIT = 200
 
 
 class AccessDenied(Exception):
@@ -120,22 +125,62 @@ class AccessMiddleware:
         # @spec DACC-ACC-002
         token = Headers(scope=scope).get("cf-access-jwt-assertion")
         if not token:
-            await _refuse(401, "unauthorized", "missing Access token")(scope, receive, send)
+            await self._refuse(scope, receive, send, 401, "missing Access token")
             return
         try:
             claims = await self._validator.validate(token)
         except AccessDenied as denied:
-            await _refuse(401, "unauthorized", str(denied))(scope, receive, send)
+            await self._refuse(scope, receive, send, 401, str(denied))
             return
         # @spec DACC-ACC-005
         email = claims.get("email")
-        identity = self._identities.get(email.lower()) if isinstance(email, str) else None
+        caller = email.lower() if isinstance(email, str) else None
+        identity = self._identities.get(caller) if caller is not None else None
         if identity is None:
-            await _refuse(403, "forbidden", "no identity for this caller")(scope, receive, send)
+            await self._refuse(
+                scope, receive, send, 403, "no identity for this caller", caller=caller
+            )
             return
         scope[IDENTITY_SCOPE_KEY] = identity
-        await self._app(scope, receive, send)
+
+        # An error the MCP application answers with (a refused Host header, an
+        # unknown path) is as invisible to the caller's side as one raised here.
+        async def watched(message: Message) -> None:
+            if message["type"] == "http.response.start" and message["status"] >= 400:
+                _log_refusal(scope, message["status"], caller=caller)
+            await send(message)
+
+        await self._app(scope, receive, watched)
+
+    async def _refuse(
+        self,
+        scope: Scope,
+        receive: Receive,
+        send: Send,
+        status: int,
+        detail: str,
+        *,
+        caller: str | None = None,
+    ) -> None:
+        _log_refusal(scope, status, reason=detail, caller=caller)
+        error = "unauthorized" if status == 401 else "forbidden"
+        response = JSONResponse({"error": error, "detail": detail}, status_code=status)
+        await response(scope, receive, send)
 
 
-def _refuse(status: int, error: str, detail: str) -> JSONResponse:
-    return JSONResponse({"error": error, "detail": detail}, status_code=status)
+# @spec DACC-AUD-004, DACC-AUD-002
+def _log_refusal(
+    scope: Scope, status: int, *, reason: str | None = None, caller: str | None = None
+) -> None:
+    """One line on stdout per request answered with an error; never the token."""
+    line: dict[str, Any] = {
+        "time": datetime.now(UTC).isoformat(timespec="seconds"),
+        "status": status,
+        "method": scope["method"],
+        "path": scope["path"][:PATH_LOG_LIMIT],
+    }
+    if caller is not None:
+        line["caller"] = caller
+    if reason is not None:
+        line["reason"] = reason
+    print(json.dumps(line), file=sys.stdout, flush=True)

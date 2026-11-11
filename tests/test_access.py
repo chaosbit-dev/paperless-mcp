@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import time
 from typing import TYPE_CHECKING, Any
 
@@ -169,3 +170,83 @@ async def test_unusable_key_set_is_401(access_keys: AccessKeys, body: Any) -> No
         )
     assert response.status_code == 401
     assert inner.reached == 0
+
+
+def refusal_lines(captured: str) -> list[dict[str, Any]]:
+    lines = []
+    for line in captured.splitlines():
+        try:
+            entry = json.loads(line)
+        except ValueError:
+            continue
+        if isinstance(entry, dict) and "status" in entry:
+            lines.append(entry)
+    return lines
+
+
+# @spec DACC-AUD-004
+async def test_each_refused_request_writes_one_refusal_line(
+    access_keys: AccessKeys, capsys: pytest.CaptureFixture[str]
+) -> None:
+    inner = Inner()
+    capsys.readouterr()
+    await post(inner, access_keys, None)
+    await post(inner, access_keys, access_keys.token(aud=["someone-else"]))
+    await post(inner, access_keys, access_keys.token(email="Stranger@Example.com"))
+    missing, invalid, stranger = refusal_lines(capsys.readouterr().out)
+
+    assert missing["time"].startswith("20")
+    assert (missing["status"], missing["method"], missing["path"]) == (401, "POST", "/mcp")
+    assert missing["reason"] == "missing Access token"
+    assert "caller" not in missing
+
+    assert (invalid["status"], invalid["reason"]) == (401, "token failed validation")
+    assert "caller" not in invalid
+
+    assert (stranger["status"], stranger["reason"]) == (403, "no identity for this caller")
+    assert stranger["caller"] == "stranger@example.com"
+
+
+class Refusing:
+    """Stands in for the MCP application answering a request with an error status."""
+
+    async def __call__(self, scope: Any, receive: Any, send: Any) -> None:
+        await send({"type": "http.response.start", "status": 421, "headers": []})
+        await send({"type": "http.response.body", "body": b"Invalid Host header"})
+
+
+# @spec DACC-AUD-004
+async def test_an_error_status_from_behind_the_perimeter_writes_a_refusal_line(
+    access_keys: AccessKeys, capsys: pytest.CaptureFixture[str]
+) -> None:
+    capsys.readouterr()
+    response = await post(Refusing(), access_keys, access_keys.token())
+    assert response.status_code == 421
+    (line,) = refusal_lines(capsys.readouterr().out)
+    assert (line["status"], line["method"], line["path"]) == (421, "POST", "/mcp")
+    assert line["caller"] == "owner@example.com"
+    assert "reason" not in line
+
+
+# @spec DACC-AUD-004
+async def test_served_requests_and_health_checks_write_no_refusal_line(
+    access_keys: AccessKeys, capsys: pytest.CaptureFixture[str]
+) -> None:
+    capsys.readouterr()
+    assert (await post(Inner(), access_keys, access_keys.token())).status_code == 200
+    assert refusal_lines(capsys.readouterr().out) == []
+
+
+# @spec DACC-AUD-002
+async def test_a_refusal_line_never_holds_the_access_token(
+    access_keys: AccessKeys, capsys: pytest.CaptureFixture[str]
+) -> None:
+    capsys.readouterr()
+    rejected = access_keys.token(aud=["someone-else"])
+    stranger = access_keys.token(email="stranger@example.com")
+    await post(Inner(), access_keys, rejected)
+    await post(Inner(), access_keys, stranger)
+    out = capsys.readouterr().out
+    assert refusal_lines(out)
+    assert rejected not in out
+    assert stranger not in out
