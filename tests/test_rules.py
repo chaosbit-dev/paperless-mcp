@@ -165,7 +165,7 @@ async def test_saved_view_with_text_or_field_rule_leaves_metadata_only_documents
     assert not {4, 5} & fake.returned_document_ids()
 
 
-# @spec DACC-RULE-004
+# @spec DACC-RULE-011
 async def test_every_document_type_matching_an_excluded_name_is_excluded(
     service: DocumentService, fake: FakePaperless
 ) -> None:
@@ -178,7 +178,7 @@ async def test_every_document_type_matching_an_excluded_name_is_excluded(
         await service.get_document(20)
 
 
-# @spec DACC-RULE-003, DACC-RULE-005
+# @spec DACC-RULE-011
 async def test_every_tag_matching_the_private_name_withholds_values(
     service: DocumentService, fake: FakePaperless
 ) -> None:
@@ -193,7 +193,7 @@ async def test_every_tag_matching_the_private_name_withholds_values(
     assert found["metadata_only_not_searched"] == 3
 
 
-# @spec DACC-RULE-004, DACC-RULE-005
+# @spec DACC-RULE-010
 async def test_documents_paperless_returns_against_the_filter_are_dropped(
     service: DocumentService, fake: FakePaperless
 ) -> None:
@@ -204,7 +204,7 @@ async def test_documents_paperless_returns_against_the_filter_are_dropped(
     assert {4, 5, 6, 8}.isdisjoint(ids(found))
 
 
-# @spec DACC-RULE-006
+# @spec DACC-RULE-010
 async def test_documents_paperless_returns_against_the_filter_are_not_summed(
     service: DocumentService, fake: FakePaperless
 ) -> None:

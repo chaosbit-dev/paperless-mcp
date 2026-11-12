@@ -198,6 +198,7 @@ async def test_failed_call_is_audited_as_an_error_class_without_the_message(
     assert "Nope" not in json.dumps(line)
 
 
+# @spec DACC-ACC-007
 async def test_request_for_an_unlisted_host_is_refused(
     settings: Settings, fake: FakePaperless, access_keys: AccessKeys
 ) -> None:

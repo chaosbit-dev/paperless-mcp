@@ -183,7 +183,7 @@ async def test_untranslated_view_rule_is_an_error_naming_it(
     assert fake.document_requests == []
 
 
-# @spec DACC-TOOL-010, DACC-RULE-009
+# @spec DACC-RULE-012
 async def test_view_of_untyped_documents_that_reads_values_is_an_error(
     service: DocumentService, fake: FakePaperless
 ) -> None:

@@ -67,7 +67,7 @@ class Runtime:
     usernames: dict[str, str]
 
 
-# @spec DACC-ID-003, DACC-ID-005, DACC-ID-008
+# @spec DACC-ACC-008, DACC-ID-003, DACC-ID-005, DACC-ID-008
 async def prepare(
     settings: Settings,
     environ: Mapping[str, str],
@@ -75,6 +75,9 @@ async def prepare(
     transport: httpx2.AsyncBaseTransport | None = None,
 ) -> Runtime:
     """Load the identity map and run every check that must pass before serving."""
+    if not settings.allowed_hosts:
+        # With no host listed, every request to the MCP endpoint is answered 421.
+        raise ConfigError("No allowed host is configured.")
     identities = load_identities(settings, environ)
     usernames: dict[str, str] = {}
     for email, identity in identities.items():
@@ -307,7 +310,7 @@ def build_app(
     async def healthz(request: Request) -> Response:
         return Response(status_code=200)
 
-    # @spec DACC-ACC-001
+    # @spec DACC-ACC-001, DACC-ACC-007
     app = mcp.streamable_http_app(
         streamable_http_path="/mcp",
         json_response=True,

@@ -72,12 +72,23 @@ async def test_invalid_identity_map_refuses_to_start(
     assert fake.requests == []
 
 
+# @spec DACC-ACC-008
+async def test_empty_allowed_hosts_refuses_to_start(
+    settings: Settings, fake: FakePaperless
+) -> None:
+    settings.allowed_hosts = []
+    with pytest.raises(ConfigError):
+        await prepare(settings, ENVIRON, transport=fake.transport())
+    assert fake.requests == []
+
+
 # @spec DACC-ID-002
 def test_main_exits_non_zero_on_an_invalid_identity_map(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("PAPERLESS_MCP_PAPERLESS_URL", "http://paperless.invalid")
     monkeypatch.setenv("PAPERLESS_MCP_PAPERLESS_UI_URL", "http://paperless.invalid")
     monkeypatch.setenv("PAPERLESS_MCP_ACCESS_TEAM_DOMAIN", "team.invalid")
     monkeypatch.setenv("PAPERLESS_MCP_ACCESS_AUDIENCE", "aud")
+    monkeypatch.setenv("PAPERLESS_MCP_ALLOWED_HOSTS", '["paperless-mcp.test"]')
     monkeypatch.setenv("PAPERLESS_MCP_IDENTITIES", "[]")
     with pytest.raises(SystemExit) as exit_:
         main()

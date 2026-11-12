@@ -245,6 +245,7 @@ class DocumentService:
         tag_names = {int(t["id"]): str(t["name"]) for t in tags}
         type_names = {int(t["id"]): str(t["name"]) for t in types}
 
+        # @spec DACC-RULE-011
         def named(names: Mapping[int, str], *wanted: str) -> frozenset[int]:
             keys = {w.casefold() for w in wanted}
             return frozenset(i for i, n in names.items() if n.casefold() in keys)
@@ -301,7 +302,7 @@ class DocumentService:
         )
         return int(body["count"])
 
-    # @spec DACC-RULE-004, DACC-RULE-009
+    # @spec DACC-RULE-010
     def _admitted(
         self, doc: Mapping[str, Any], taxonomy: Taxonomy, *, by_value: bool = False
     ) -> bool:
@@ -684,7 +685,7 @@ class DocumentService:
 
     # -- run_saved_view -----------------------------------------------------------------
 
-    # @spec DACC-TOOL-009, DACC-TOOL-010, DACC-RULE-008, DACC-RULE-009
+    # @spec DACC-TOOL-009, DACC-TOOL-010, DACC-RULE-008, DACC-RULE-009, DACC-RULE-012
     async def run_saved_view(self, view: str, *, limit: int = 25, page: int = 1) -> dict[str, Any]:
         _check_paging(limit, page)
         taxonomy = await self._taxonomy()
