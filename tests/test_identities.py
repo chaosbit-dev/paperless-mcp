@@ -8,7 +8,13 @@ from typing import TYPE_CHECKING, Any
 import pytest
 
 from paperless_mcp.config import IdentityConfig, Settings, load_identities
-from paperless_mcp.errors import ConfigError, PaperlessError, PaperlessUnreachable, PermissionDrift
+from paperless_mcp.errors import (
+    ConfigError,
+    PaperlessError,
+    PaperlessStatusError,
+    PaperlessUnreachable,
+    PermissionDrift,
+)
 from paperless_mcp.permissions import PermissionMonitor
 from paperless_mcp.server import main, prepare
 
@@ -203,6 +209,41 @@ async def test_unreachable_paperless_during_a_repeated_check_keeps_serving() -> 
     await asyncio.wait_for(monitor.run(), timeout=2)
     assert calls == 4
     assert drifted == [True]
+
+
+# @spec DACC-ID-009
+@pytest.mark.parametrize("status", [401, 403])
+async def test_token_paperless_rejects_at_a_repeated_check_stops_the_server(status: int) -> None:
+    calls = 0
+    drifted: list[bool] = []
+
+    async def check() -> None:
+        nonlocal calls
+        calls += 1
+        if calls == 2:
+            raise PaperlessStatusError(status)
+
+    monitor = PermissionMonitor(check, interval=0.01, on_drift=lambda: drifted.append(True))
+    await asyncio.wait_for(monitor.run(), timeout=2)
+    assert calls == 2
+    assert drifted == [True]
+
+
+# @spec DACC-ID-007
+async def test_error_status_other_than_a_rejected_token_keeps_serving() -> None:
+    calls = 0
+    drifted: list[bool] = []
+
+    async def check() -> None:
+        nonlocal calls
+        calls += 1
+        if calls < 3:
+            raise PaperlessStatusError(502)
+        raise PermissionDrift("stop")
+
+    monitor = PermissionMonitor(check, interval=0.01, on_drift=lambda: drifted.append(True))
+    await asyncio.wait_for(monitor.run(), timeout=2)
+    assert calls == 3
 
 
 # @spec DACC-ID-008

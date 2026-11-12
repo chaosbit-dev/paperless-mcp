@@ -59,6 +59,9 @@ VIEW_NOTE = (
     "Results come from this server's translation of the saved view's filter rules, with its "
     "own access rules applied; the count can be lower than the Paperless UI shows for the view."
 )
+SORT_NOTE = (
+    "This server does not apply the sort order the saved view names; the documents are listed {}."
+)
 VIEW_ORDERINGS = frozenset(
     {
         "created",
@@ -681,6 +684,7 @@ class DocumentService:
             name = taxonomy.correspondents.get(doc.get("correspondent") or 0)
         else:
             name = taxonomy.document_types.get(doc.get("document_type") or 0)
+        # @spec DACC-SUM-008
         return EMPTY_GROUP if name is None else str(name)[:MAX_STRING]
 
     # -- run_saved_view -----------------------------------------------------------------
@@ -693,11 +697,17 @@ class DocumentService:
         chosen = views[_resolve({i: str(v["name"]) for i, v in views.items()}, "saved view", view)]
         params = self._view_params(chosen, taxonomy)
         total, results = await self._page(params, limit, page, taxonomy)
-        return {
+        out: dict[str, Any] = {
             "total": total,
             "documents": [self._render(doc, taxonomy) for doc in results],
             "note": VIEW_NOTE,
         }
+        # @spec DACC-TOOL-011
+        if chosen.get("sort_field") and "ordering" not in params:
+            out["sort_note"] = SORT_NOTE.format("by relevance")
+        elif chosen.get("sort_field") and chosen["sort_field"] not in VIEW_ORDERINGS:
+            out["sort_note"] = SORT_NOTE.format("newest first")
+        return out
 
     def _view_params(self, view: Mapping[str, Any], taxonomy: Taxonomy) -> Params:
         rules: dict[int, list[str | None]] = {}

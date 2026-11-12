@@ -198,6 +198,35 @@ async def test_failed_call_is_audited_as_an_error_class_without_the_message(
     assert "Nope" not in json.dumps(line)
 
 
+# @spec DACC-AUD-005
+async def test_call_refused_before_a_tool_runs_is_audited(
+    settings: Settings,
+    fake: FakePaperless,
+    access_keys: AccessKeys,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    app = await build(settings, fake, access_keys)
+    async with mcp_session(app, access_keys.token()) as session:
+        capsys.readouterr()
+        assert (await session.call_tool("get_document", {"id": "Dr. Alpha"})).is_error
+        assert (await session.call_tool("get_document", {})).is_error
+        assert (await session.call_tool("drop_everything", {"id": 1})).is_error
+    captured = capsys.readouterr()
+    out = captured.out
+    assert "Dr. Alpha" not in captured.err
+    invalid, missing, unknown = audit_lines(out)
+    for line in (invalid, missing, unknown):
+        assert set(line) == AUDIT_KEYS | {"error"}
+        assert line["caller"] == "owner@example.com"
+        assert line["ok"] is False
+        assert line["document_ids"] == []
+    assert (invalid["tool"], invalid["error"]) == ("get_document", "InvalidArguments")
+    assert (missing["tool"], missing["error"]) == ("get_document", "InvalidArguments")
+    assert (unknown["tool"], unknown["error"]) == ("(unknown)", "UnknownTool")
+    assert "drop_everything" not in out
+    assert "Dr. Alpha" not in out
+
+
 # @spec DACC-ACC-007
 async def test_request_for_an_unlisted_host_is_refused(
     settings: Settings, fake: FakePaperless, access_keys: AccessKeys

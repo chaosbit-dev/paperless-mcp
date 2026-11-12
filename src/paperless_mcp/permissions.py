@@ -6,7 +6,12 @@ import asyncio
 import logging
 from typing import TYPE_CHECKING
 
-from paperless_mcp.errors import ConfigError, PaperlessError, PermissionDrift
+from paperless_mcp.errors import (
+    ConfigError,
+    PaperlessError,
+    PaperlessStatusError,
+    PermissionDrift,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable, Sequence
@@ -74,7 +79,7 @@ class PermissionMonitor:
         self._interval = interval
         self._on_drift = on_drift
 
-    # @spec DACC-ID-006, DACC-ID-007
+    # @spec DACC-ID-006, DACC-ID-007, DACC-ID-009
     async def run(self) -> None:
         while True:
             await asyncio.sleep(self._interval)
@@ -85,6 +90,15 @@ class PermissionMonitor:
                 self._on_drift()
                 return
             except PaperlessError as error:
+                if isinstance(error, PaperlessStatusError) and error.status in (401, 403):
+                    # A token Paperless no longer accepts will not start working again,
+                    # and a server holding one answers every call with an error.
+                    logger.error(
+                        "Permission check failed: Paperless rejected the token (HTTP %d).",
+                        error.status,
+                    )
+                    self._on_drift()
+                    return
                 logger.warning(
                     "Permission check could not be made (%s); retrying.", type(error).__name__
                 )

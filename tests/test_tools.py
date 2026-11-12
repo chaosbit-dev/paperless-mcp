@@ -191,3 +191,22 @@ async def test_view_of_untyped_documents_that_reads_values_is_an_error(
     with pytest.raises(UnsupportedViewRule, match="document type"):
         await service.run_saved_view("Loose")
     assert not fake.document_requests
+
+
+# @spec DACC-TOOL-011
+async def test_saved_view_sorted_a_way_the_server_does_not_apply_says_so(
+    service: DocumentService, fake: FakePaperless
+) -> None:
+    fake.add_saved_view(1, "By date", [(28, "1")], sort_field="added")
+    fake.add_saved_view(2, "By field", [(28, "1")], sort_field="custom_field_17")
+    fake.add_saved_view(3, "By field, searched", [(28, "1"), (20, "statement")], sort_field="x")
+
+    assert "sort_note" not in await service.run_saved_view("By date")
+
+    by_field = await service.run_saved_view("By field")
+    assert "newest first" in by_field["sort_note"]
+    created = [doc["created"] for doc in by_field["documents"]]
+    assert created == sorted(created, reverse=True)
+
+    searched = await service.run_saved_view("By field, searched")
+    assert "relevance" in searched["sort_note"]

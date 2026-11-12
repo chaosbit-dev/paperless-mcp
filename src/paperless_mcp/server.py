@@ -115,6 +115,9 @@ def _audit(
     print(json.dumps(line), file=sys.stdout, flush=True)
 
 
+UNKNOWN_TOOL = "(unknown)"
+
+
 def _log_drift() -> None:
     logger.error("An identity holds more permission than its mode allows.")
 
@@ -140,8 +143,35 @@ def build_app(
         )
         for email, client in clients.items()
     }
+
+    class AuditedServer(MCPServer):
+        # @spec DACC-AUD-005
+        async def call_tool(
+            self, name: str, arguments: dict[str, Any], context: Context | None = None
+        ) -> Any:
+            """Audit the calls the SDK refuses before any tool function runs."""
+            try:
+                return await super().call_tool(name, arguments, context)
+            except McpToolError as error:
+                known = self._tool_manager.get_tool(name) is not None
+                invalid = known and isinstance(error.__cause__, ValidationError)
+                if context is None or (known and not invalid):
+                    raise
+                request = context.request_context.request
+                identity: Identity = request.scope[IDENTITY_SCOPE_KEY]  # type: ignore[union-attr]
+                _audit(
+                    caller=identity.email,
+                    paperless_user=runtime.usernames[identity.email],
+                    # A name this server does not offer is the caller's text, not a tool.
+                    tool=name if known else UNKNOWN_TOOL,
+                    document_ids=[],
+                    result_count=0,
+                    error="InvalidArguments" if invalid else "UnknownTool",
+                )
+                raise
+
     # @spec DACC-TOOL-001
-    mcp = MCPServer("paperless", instructions=INSTRUCTIONS)
+    mcp = AuditedServer("paperless", instructions=INSTRUCTIONS)
 
     # @spec DACC-ID-001, DACC-ERR-001
     async def call(

@@ -10,7 +10,7 @@ import httpx2
 import pytest
 from cryptography.hazmat.primitives.asymmetric import rsa
 
-from paperless_mcp.access import AccessMiddleware, AccessValidator
+from paperless_mcp.access import AccessDenied, AccessMiddleware, AccessValidator
 from paperless_mcp.config import Identity
 
 from .conftest import AUDIENCE, TEAM_DOMAIN, build, http_client, mcp_session, payload
@@ -106,21 +106,33 @@ async def test_valid_jwt_for_a_known_caller_reaches_mcp(access_keys: AccessKeys)
 
 
 # @spec DACC-ACC-004
-async def test_unknown_key_id_refetches_the_key_set_once(access_keys: AccessKeys) -> None:
-    inner = Inner()
-    validator = AccessValidator(TEAM_DOMAIN, AUDIENCE, transport=access_keys.transport())
+async def test_unknown_key_id_refetches_the_key_set_at_most_once_a_minute(
+    access_keys: AccessKeys,
+) -> None:
+    now = 1000.0
+    validator = AccessValidator(
+        TEAM_DOMAIN, AUDIENCE, transport=access_keys.transport(), clock=lambda: now
+    )
     await validator.validate(access_keys.token())
     await validator.validate(access_keys.token())
     assert access_keys.fetches == 1
 
+    for _ in range(3):
+        with pytest.raises(AccessDenied):
+            await validator.validate(access_keys.token(kid="kid-unknown"))
+    assert access_keys.fetches == 1
+
     rotated = access_keys.rotate()
+    with pytest.raises(AccessDenied):
+        await validator.validate(access_keys.token(kid=rotated))
+    assert access_keys.fetches == 1
+
+    now += 61
     await validator.validate(access_keys.token(kid=rotated))
     assert access_keys.fetches == 2
-
-    assert (
-        await post(inner, access_keys, access_keys.token(kid="kid-unknown"))
-    ).status_code == 401
-    assert access_keys.fetches == 4  # the fresh validator's first fetch, then one refetch
+    with pytest.raises(AccessDenied):
+        await validator.validate(access_keys.token(kid="kid-unknown"))
+    assert access_keys.fetches == 2
 
 
 # @spec DACC-ACC-005

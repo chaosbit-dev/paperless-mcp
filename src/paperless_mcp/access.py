@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 import sys
+import time
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
@@ -14,7 +15,7 @@ from starlette.datastructures import Headers
 from starlette.responses import JSONResponse
 
 if TYPE_CHECKING:
-    from collections.abc import Mapping
+    from collections.abc import Callable, Mapping
 
     from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
@@ -25,6 +26,8 @@ HEALTH_PATH = "/healthz"
 IDENTITY_SCOPE_KEY = "paperless_mcp.identity"
 # A refusal line records the path, which the caller chose: bound it.
 PATH_LOG_LIMIT = 200
+# How long a fetched key set is trusted to be complete, in seconds.
+KEY_REFETCH_INTERVAL = 60.0
 
 
 class AccessDenied(Exception):
@@ -38,12 +41,15 @@ class AccessValidator:
         audience: str,
         *,
         transport: httpx2.AsyncBaseTransport | None = None,
+        clock: Callable[[], float] = time.monotonic,
     ) -> None:
         self._issuer = f"https://{team_domain}"
         self._certs_url = f"{self._issuer}/cdn-cgi/access/certs"
         self._audience = audience
         self._http = httpx2.AsyncClient(transport=transport, timeout=10.0)
         self._keys: dict[str, jwt.PyJWK] = {}
+        self._clock = clock
+        self._fetched_at: float | None = None
         self._lock = asyncio.Lock()
 
     async def _fetch_keys(self) -> None:
@@ -65,14 +71,18 @@ class AccessValidator:
             if key.key_id:
                 keys[key.key_id] = key
         self._keys = keys
+        self._fetched_at = self._clock()
 
     # @spec DACC-ACC-004
     async def _signing_key(self, kid: str) -> jwt.PyJWK:
         async with self._lock:
-            if not self._keys:
-                await self._fetch_keys()
-            # A key id the cached set does not hold may be a rotation: look once more.
-            if kid not in self._keys:
+            # A key id the cached set does not hold may be a rotation: look again, but
+            # no more often than the interval, or any caller could make this server
+            # fetch on every request by inventing key ids.
+            if kid not in self._keys and (
+                self._fetched_at is None
+                or self._clock() - self._fetched_at >= KEY_REFETCH_INTERVAL
+            ):
                 await self._fetch_keys()
         try:
             return self._keys[kid]

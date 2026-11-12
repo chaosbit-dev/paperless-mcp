@@ -179,3 +179,17 @@ async def test_group_by_keywords_are_matched_without_regard_to_case(
         "Patient Responsibility", document_type="EOB", group_by="Correspondent"
     )
     assert set(groups(result)) == {"Acme Health", "(empty)"}
+
+
+# @spec DACC-SUM-008
+async def test_group_values_agreeing_in_their_first_500_characters_share_a_group(
+    service: DocumentService, fake: FakePaperless
+) -> None:
+    stem = "p" * 500
+    fake.add_document(30, "Long A", fields={17: "USD1.00", 18: stem + "a"})
+    fake.add_document(31, "Long B", fields={17: "USD2.00", 18: stem + "b"})
+    by_provider = groups(
+        await service.summarize_field("Patient Responsibility", group_by="Provider")
+    )
+    assert by_provider[stem]["count"] == 2
+    assert by_provider[stem]["sum"] == "3.00"

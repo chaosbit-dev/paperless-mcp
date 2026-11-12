@@ -44,6 +44,8 @@ have grown.
 
 Each tool call writes one JSON audit line to stdout: who called, which Paperless user it
 acted as, the tool, the document ids returned. Never a value, a title or a search string.
+A call refused before a tool runs (an unknown tool, arguments that do not fit the schema) writes
+the same line with the error class.
 
 ## Image
 
