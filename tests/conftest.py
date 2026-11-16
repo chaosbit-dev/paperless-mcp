@@ -113,7 +113,9 @@ def fake() -> FakePaperless:
         created="2025-12-31",
     )
     f.add_document(8, "Private report card", document_type=3, tags=[9], created="2026-04-03")
-    f.add_document(9, "Acme Health EOB April", tags=[12], created="2026-04-10", fields={17: "USD5.00"})
+    f.add_document(
+        9, "Acme Health EOB April", tags=[12], created="2026-04-10", fields={17: "USD5.00"}
+    )
     return f
 
 
