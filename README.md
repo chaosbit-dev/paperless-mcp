@@ -14,13 +14,10 @@ returning document text.
 
 ## Design and specs
 
-The design and the EARS specs live in the `homelab-batch` repository, segment
-`document-access` (prefix `DACC`):
-
-- `docs/intent/document-access/document-access-design.md`
-- `docs/intent/document-access/document-access-specs.md`
-
-Code and tests here cite those specs as `@spec DACC-…`.
+The design and the EARS specs are kept in a separate, private specification repository,
+under the segment `document-access` (prefix `DACC`). Code and tests here cite those specs as
+`@spec DACC-…`, so a citation is a pointer to the requirement a line implements even when the
+spec itself isn't public.
 
 ## Configuration
 
@@ -50,8 +47,9 @@ the same line with the error class.
 ## Image
 
 `build-push.yml` publishes `registry.home.chaosbit.dev/paperless-mcp` on every push to
-`main`, and only after `ci.yml` passes on that commit. It needs four repository-level
-secrets, listed at the top of the workflow.
+`main`, and only after `ci.yml` passes on that commit. It reads four secrets from the
+`release` environment, which only `main` can deploy to; they're listed at the top of the
+workflow.
 
 ## Development
 
@@ -61,3 +59,7 @@ uv run ruff check .
 uv run mypy src
 uv run pytest -q
 ```
+
+## License
+
+[MIT](LICENSE)

@@ -13,8 +13,9 @@ uv run pytest -q
 
 ## Rules
 
-- Intent lives in `homelab-batch`, segment `document-access` (`DACC`). Change the spec there
-  first, then the test, then the code. Tests and code carry `@spec DACC-…`.
+- Intent lives in a private spec repository, segment `document-access` (`DACC`). Change the
+  spec first, then the test, then the code. Tests and code carry `@spec DACC-…`. Without
+  access to the spec repo, describe the intended behaviour in the PR instead.
 - Tests run against `tests/fake_paperless.py`. It rejects any query parameter it does not
   know, because real Paperless silently ignores unknown parameters and returns everything.
   Add a parameter to the fake only after confirming Paperless honours it.
