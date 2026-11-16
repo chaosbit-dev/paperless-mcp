@@ -10,8 +10,8 @@
 #   :<sha>                   immutable, for manual pinning / rollback
 #   :main-<sha7>-<unixts>    sortable, what Flux's ImagePolicy ranks
 #
-# Required secrets, REPOSITORY level on this repo (org-level secrets resolve to
-# empty strings in a private repo on the GitHub Free plan):
+# Required secrets, in this repo's `release` environment (org-level secrets resolve
+# to empty strings in a private repo on the GitHub Free plan):
 #   TS_OAUTH_CLIENT_ID / TS_OAUTH_SECRET   Tailscale OAuth client (tag:ci).
 #   REGISTRY_USERNAME / REGISTRY_PASSWORD  Registry `ci` credential.
 name: build-and-push
@@ -33,6 +33,9 @@ jobs:
     uses: ./.github/workflows/ci.yml
 
   build:
+    # The registry and tailnet credentials live in the `release` environment, which only the default
+    # branch may use: a pushed branch's workflow can't read them (Kamino KAMINO-FLOW-BOOT-012).
+    environment: release
     needs: check
     # The tags say main, so a manual run from another branch publishes nothing.
     if: github.ref == 'refs/heads/main'
