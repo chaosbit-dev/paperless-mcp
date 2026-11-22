@@ -1,95 +1,139 @@
-# Build and publish the paperless-mcp image to the private registry.
+# @spec DACC-BUILD-001
+# Build, publish, sign and attest the paperless-mcp image: ghcr.io/chaosbit-dev/paperless-mcp.
 #
-# CI's only job is to publish an immutable artifact: it builds the image and
-# pushes it to registry.home.chaosbit.dev over an ephemeral tailnet join. It has
-# no cluster credentials and no write access to gonk-infra. Deployment is
-# pull-based: Flux on Gonk ranks the sortable tag and rolls the newest one out.
+# This repository is public, so it holds no secret at all. The image is pushed with this run's own
+# GITHUB_TOKEN, whose `packages: write` lasts one job, and signed keyless with the run's GitHub OIDC
+# identity. Nothing here can reach the tailnet or a private registry, and there is no stored
+# credential for a workflow, a fork or a compromised action to read.
 #
 # Tags pushed:
 #   :latest                  convenience / humans
 #   :<sha>                   immutable, for manual pinning / rollback
 #   :main-<sha7>-<unixts>    sortable, what Flux's ImagePolicy ranks
 #
-# Required secrets, in this repo's `release` environment (org-level secrets resolve
-# to empty strings in a private repo on the GitHub Free plan):
-#   TS_OAUTH_CLIENT_ID / TS_OAUTH_SECRET   Tailscale OAuth client (tag:ci).
-#   REGISTRY_USERNAME / REGISTRY_PASSWORD  Registry `ci` credential.
+# Verify a published image's signature and attestations:
+#   id='^https://github.com/chaosbit-dev/paperless-mcp/.github/workflows/build-push.yml@refs/heads/main$'
+#   iss=https://token.actions.githubusercontent.com
+#   cosign verify --certificate-identity-regexp "$id" --certificate-oidc-issuer "$iss" \
+#     ghcr.io/chaosbit-dev/paperless-mcp@<digest>
+#   cosign verify-attestation --type spdxjson|slsaprovenance1 (same flags and image)
 name: build-and-push
 
 on:
   push:
     branches: [main]
+  pull_request:
   # Manual seed for the first build, and for forced rebuilds.
   workflow_dispatch:
 
 permissions:
   contents: read
 
+# Two main builds must not race to push :latest.
+concurrency:
+  group: build-and-push-${{ github.event_name == 'pull_request' && github.ref || 'main' }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
+  # A pull request only proves the image builds: it pushes and signs nothing.
+  dry-run:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7
+        with:
+          context: .
+          platforms: linux/amd64
+          push: false
+
   # @spec DACC-BUILD-001
-  # Flux deploys the newest tag on its own, so nothing is published unless lint,
-  # type-check and tests pass on this exact commit.
+  # Flux deploys the newest tag on its own, and the image runs with a token that reads the whole
+  # Paperless archive, so nothing is published unless lint, type-check and tests pass on this
+  # exact commit. Every action below is pinned by commit SHA.
   check:
+    if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
     uses: ./.github/workflows/ci.yml
 
   build:
-    # The registry and tailnet credentials live in the `release` environment, which only the default
-    # branch may use: a pushed branch's workflow can't read them (Kamino KAMINO-FLOW-BOOT-012).
-    environment: release
     needs: check
-    # The tags say main, so a manual run from another branch publishes nothing.
-    if: github.ref == 'refs/heads/main'
+    # Only main's build is signed by a main identity and may move :latest.
+    if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
     runs-on: ubuntu-latest
     permissions:
       contents: read
+      packages: write
+      id-token: write
+    env:
+      IMAGE: ghcr.io/chaosbit-dev/paperless-mcp
     steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
-
-      # Fail here rather than inside the tailscale action, whose error never
-      # mentions that a secret was empty.
-      - name: Check required secrets are present
-        env:
-          TS_OAUTH_CLIENT_ID: ${{ secrets.TS_OAUTH_CLIENT_ID }}
-          TS_OAUTH_SECRET: ${{ secrets.TS_OAUTH_SECRET }}
-          REGISTRY_USERNAME: ${{ secrets.REGISTRY_USERNAME }}
-          REGISTRY_PASSWORD: ${{ secrets.REGISTRY_PASSWORD }}
-        run: |
-          missing=()
-          for name in TS_OAUTH_CLIENT_ID TS_OAUTH_SECRET REGISTRY_USERNAME REGISTRY_PASSWORD; do
-            [ -n "${!name}" ] || missing+=("$name")
-          done
-          if [ ${#missing[@]} -ne 0 ]; then
-            echo "::error::Missing repository secrets: ${missing[*]}"
-            echo "Fix:  gh secret set <NAME> --repo ${GITHUB_REPOSITORY}"
-            exit 1
-          fi
-
-      - name: Image metadata (sortable tag)
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550 # v4.8.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Image metadata
         id: meta
         run: |
           echo "sha7=$(echo "${GITHUB_SHA}" | cut -c1-7)" >> "$GITHUB_OUTPUT"
           echo "ts=$(date +%s)" >> "$GITHUB_OUTPUT"
-
-      - name: Join tailnet (ephemeral)
-        uses: tailscale/github-action@306e68a486fd2350f2bfc3b19fcd143891a4a2d8 # v4
-        with:
-          oauth-client-id: ${{ secrets.TS_OAUTH_CLIENT_ID }}
-          oauth-secret: ${{ secrets.TS_OAUTH_SECRET }}
-          tags: tag:ci
-
-      - name: Log in to registry
-        run: |
-          echo "${{ secrets.REGISTRY_PASSWORD }}" \
-            | docker login registry.home.chaosbit.dev \
-                -u "${{ secrets.REGISTRY_USERNAME }}" \
-                --password-stdin
-
       - name: Build and push
-        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7
+        id: build
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7
         with:
           context: .
+          platforms: linux/amd64
           push: true
+          # Links the package to this public repository, so it is published public.
+          labels: org.opencontainers.image.source=https://github.com/${{ github.repository }}
           tags: |
-            registry.home.chaosbit.dev/${{ github.event.repository.name }}:latest
-            registry.home.chaosbit.dev/${{ github.event.repository.name }}:${{ github.sha }}
-            registry.home.chaosbit.dev/${{ github.event.repository.name }}:main-${{ steps.meta.outputs.sha7 }}-${{ steps.meta.outputs.ts }}
+            ${{ env.IMAGE }}:latest
+            ${{ env.IMAGE }}:${{ github.sha }}
+            ${{ env.IMAGE }}:main-${{ steps.meta.outputs.sha7 }}-${{ steps.meta.outputs.ts }}
+      - uses: sigstore/cosign-installer@756fe2d284c7292c4e9b62c8a28f1e5629c59532 # v4.1.3
+      - name: Sign the image (keyless)
+        env:
+          DIGEST: ${{ steps.build.outputs.digest }}
+        run: cosign sign --yes "${IMAGE}@${DIGEST}"
+      - uses: anchore/sbom-action@66cbf4bc1f1c0d2edc94016e65bc221b6bb0ad6c # v0.24.3
+        with:
+          image: ghcr.io/chaosbit-dev/paperless-mcp@${{ steps.build.outputs.digest }}
+          format: spdx-json
+          output-file: sbom.spdx.json
+          upload-artifact: false
+      - name: Attest the SBOM (keyless, stored in GHCR)
+        env:
+          DIGEST: ${{ steps.build.outputs.digest }}
+        run: cosign attest --yes --type spdxjson --predicate sbom.spdx.json "${IMAGE}@${DIGEST}"
+      - name: Write the build provenance predicate
+        run: |
+          jq -n \
+            --arg repository "${GITHUB_REPOSITORY}" \
+            --arg ref "${GITHUB_REF}" \
+            --arg workflow "${GITHUB_WORKFLOW_REF}" \
+            --arg sha "${GITHUB_SHA}" \
+            --arg run_id "${GITHUB_RUN_ID}" \
+            --arg run_url "${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}" \
+            '{
+              buildDefinition: {
+                buildType: "https://actions.github.io/buildtypes/workflow/v1",
+                externalParameters: {
+                  workflow: {repository: ("https://github.com/" + $repository), ref: $ref, path: ".github/workflows/build-push.yml"},
+                  sha: $sha
+                },
+                internalParameters: {workflowRef: $workflow}
+              },
+              runDetails: {
+                builder: {id: ("https://github.com/" + $repository + "/.github/workflows/build-push.yml@" + $ref)},
+                metadata: {invocationId: $run_url, runId: $run_id}
+              }
+            }' > provenance.json
+      - name: Attest the build provenance (keyless, stored in GHCR)
+        env:
+          DIGEST: ${{ steps.build.outputs.digest }}
+        run: cosign attest --yes --type slsaprovenance1 --predicate provenance.json "${IMAGE}@${DIGEST}"

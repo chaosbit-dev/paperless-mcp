@@ -46,10 +46,11 @@ the same line with the error class.
 
 ## Image
 
-`build-push.yml` publishes `registry.home.chaosbit.dev/paperless-mcp` on every push to
-`main`, and only after `ci.yml` passes on that commit. It reads four secrets from the
-`release` environment, which only `main` can deploy to; they're listed at the top of the
-workflow.
+`build-push.yml` publishes `ghcr.io/chaosbit-dev/paperless-mcp` (a public package) on every
+push to `main`, and only after `ci.yml` passes on that commit. It holds no stored secret: it
+pushes with the run's own `GITHUB_TOKEN`, signs the image keyless with the run's GitHub OIDC
+identity, and attests an SBOM and build provenance. A pull request only builds the image. The
+`cosign verify` command is at the top of the workflow.
 
 ## Development
 
