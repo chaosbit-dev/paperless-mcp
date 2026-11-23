@@ -1,5 +1,10 @@
 # paperless-mcp
 
+[![License: MIT](https://img.shields.io/badge/license-MIT-10B981)](LICENSE)
+[![CI](https://img.shields.io/github/actions/workflow/status/chaosbit-dev/paperless-mcp/build-push.yml?branch=main&label=CI)](https://github.com/chaosbit-dev/paperless-mcp/actions/workflows/build-push.yml)
+[![Version](https://img.shields.io/badge/dynamic/toml?url=https%3A%2F%2Fraw.githubusercontent.com%2Fchaosbit-dev%2Fpaperless-mcp%2Fmain%2Fpyproject.toml&query=%24.project.version&label=version&prefix=v)](pyproject.toml)
+[![Python](https://img.shields.io/python/required-version-toml?tomlFilePath=https%3A%2F%2Fraw.githubusercontent.com%2Fchaosbit-dev%2Fpaperless-mcp%2Fmain%2Fpyproject.toml)](pyproject.toml)
+
 An MCP server for [Paperless-ngx](https://docs.paperless-ngx.com/). It lets a Claude session
 find documents and read their extracted custom fields — amounts, dates, providers — without
 returning document text.
