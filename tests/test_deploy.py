@@ -201,7 +201,7 @@ def test_the_image_is_published_to_ghcr_and_signed() -> None:
 
 # @spec DACC-BUILD-001
 def test_no_workflow_holds_a_stored_secret_or_reaches_the_private_registry() -> None:
-    """This repository is public: only the run's own GITHUB_TOKEN, no environment, no tailnet."""
+    """Public repo: only the run's own GITHUB_TOKEN, no secret-holding environment, no tailnet."""
     for path in workflow_files():
         text = path.read_text()
         stored = set(STORED_SECRET.findall(text)) - {"GITHUB_TOKEN"}
@@ -209,7 +209,13 @@ def test_no_workflow_holds_a_stored_secret_or_reaches_the_private_registry() -> 
         assert "registry.home.chaosbit.dev" not in text, f"{path.name} names the private registry"
         assert "tailscale" not in text.lower(), f"{path.name} joins the tailnet"
         for name, job in jobs_of(load(path)).items():
-            assert "environment" not in job, f"{path.name}:{name} uses a deployment environment"
+            env = job.get("environment")
+            env_name = env.get("name") if isinstance(env, dict) else env
+            # The one environment allowed is github-pages: it holds no secrets, and its branch
+            # policy is what stops a workflow run from any branch but main deploying Pages.
+            assert env is None or env_name == "github-pages", (
+                f"{path.name}:{name} uses deployment environment {env_name!r}"
+            )
 
 
 # @spec DACC-BUILD-001
